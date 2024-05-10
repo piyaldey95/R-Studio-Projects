@@ -1,0 +1,317 @@
+---
+title: "Prediction Model of Insurance Cost"
+author: "Piyal Dey"
+date: "10.05.2024"
+output: 
+    rmdformats::readthedown:
+    toc: 
+     toc_float: yes
+     collapsed: yes
+    fig_width: 14
+    keep_md: yes
+    toc_depth: 5
+---
+
+# Setup
+
+A health insurance company's financial success relies on generating more revenue than it incurs cost on the healthcare of its policyholders. However, forecasting medical expenses is challenging due to the unpredictability of costs associated with rare conditions. This project aims to precisely predict insurance costs by analyzing individuals' data, such as age, Body Mass Index, smoking habits, and other factors. Furthermore, we will identify the key variable that has the most significant impact on insurance costs. These predictions can be utilized to develop actuarial tables, enabling the adjustment of yearly premiums based on anticipated treatment expenses. This essentially constitutes a regression problem.
+
+## Library
+
+For analyzing the data set and developing a prediction model the below necessary library functions are loaded.
+
+```{r message=FALSE, warning=FALSE}
+library(dplyr)
+library(ggplot2)
+library(GGally)
+library(MLmetrics)
+library(car)
+
+```
+
+## Data set
+
+```{r}
+
+train <- read.csv("train.csv")
+test <- read.csv("test.csv")
+
+str(train)
+```
+
+From the data set, we have the following variables:
+
+1.  age: age of primary beneficiary.
+2.  sex: insurance contractor gender, female, male.
+3.  bmi: Body Mass Index, providing an understanding of body, weights that are relatively high or low relative to height, objective index of body weight (kg/m2) using the ratio of height to weight, ideally 18.5 to 24.9.
+4.  children: number of children covered by health insurance / number of dependents.
+5.  smoker: smoking or not.
+6.  region: the beneficiary's residential area in the US, northeast, southeast, southwest, northwest.
+7.  charges: individual medical costs billed by health insurance.
+
+# Data Preparation
+
+## Changing Data Type
+
+Here, The variables are not stored in correct data type. Variables named as `sex`, `smoker` and `region` has to be converted as `factor` datatype. Therefore, Converting the variables in their appropriate datatype for further analysis.
+
+```{r}
+factorCol <- c('sex', 'smoker', 'region')
+
+for (col in factorCol) {
+  train[[col]] <- as.factor(train[[col]])
+}
+str(train)
+```
+
+## Finding Duplicate Data
+
+```{r}
+train[duplicated(train), ]
+```
+
+One row of duplicate data found in the data set. It is highly unlikely to have same demographic and health characteristics including charges for two different people. So, we can remove the duplicate data from the data set.
+
+```{r}
+train <-  train %>% distinct()
+```
+
+## Finding Missing Value
+
+```{r}
+colSums(is.na(train))
+```
+
+No missing value found in the data set. The data set is now ready for analysis.
+
+# Exploratory Data Analysis (EDA)
+
+## Descriptive Statistics
+
+```{r}
+summary(train)
+```
+
+The data set contains data of people aged between 18 to 64 years. However, most of the people are around 39 years of age. It has almost similar number of data based on their sex and region. The bmi of the people ranges between 15.96 to 53.13. Further, we can see that there is a major difference in the number of people in the category of smoking habit. Non-smoker people are greater in number than smokers. And the medical charges also varies from \$1100 to \$64000.
+
+## Distribution of Charges
+
+```{r}
+ggplot(train, aes(x = charges)) +
+  geom_density(alpha = .5) +
+  labs(title = "Distribution of Charges", 
+          x = "Charges", 
+          y = "Density") +
+  
+   theme(plot.title = element_text(color="navy",
+                                   hjust = .5,
+                                   size=20),
+                        
+                        axis.title.x = element_text(size=15),
+                        axis.title.y = element_text(size=15),
+                        axis.text.x = element_text(size=12),
+                        axis.text.y = element_text(size=12),
+                        )
+
+```
+
+From the above distribution plot, we can see that, medical charges of most of the people lies between \$1000 to \$10000. The distribution declines toward right side which means that only very few people has higher medical charges and among them most of their medical charges lies in around \$40000. To identify any categorical significance for this kind of variation of distribution in charges, we have generated `boxplots` based on different categorical features.
+
+## Box-plots
+
+```{r}
+
+for (col in c('sex', 'region', 'children', 'smoker')) {
+  boxplot <- ggplot(train, aes(x = !!sym(col), y = charges, group = !!sym(col), colour = !!sym(col))) +
+    geom_boxplot(size = .8, show.legend = FALSE) +
+    ggtitle(glue::glue("Boxplot of Medical Charges as per {col}")) +
+    
+    theme(plot.title = element_text(color = "navy", hjust = 0.5, size = 20),
+          axis.title.x = element_text(size = 15),
+          axis.title.y = element_text(size = 15),
+          axis.text.x = element_text(size = 12),
+          axis.text.y = element_text(size = 12),
+          legend.title = element_blank(),
+          legend.text = element_text(size = 12))
+  
+  print(boxplot)
+}
+
+
+
+```
+
+Here, by looking into the `boxplots` we can see that there isn't any significant difference in the charges of `sex` and `region` category. In the `children` category, we can see a slight increase of charges with the increase of number of children they have. But in the category of `smoker` , the plot shows a significant difference. People who smoke has greater medical charges compared to people who don't smoke.
+
+## Distribution of Charges By Smoking Habit
+
+```{r}
+ggplot(train, aes(x = charges, fill = smoker)) +
+  geom_density(alpha = .5) +
+  labs(title = "Distribution of Charges by Smoking Habit", 
+          x = "Charges", 
+          y = "Density") +
+  
+   theme(plot.title = element_text(color="navy",
+                                   hjust = .5,
+                                   size=20),
+                        
+                        axis.title.x = element_text(size=15),
+                        axis.title.y = element_text(size=15),
+                        axis.text.x = element_text(size=12),
+                        axis.text.y = element_text(size=12),
+                        )
+```
+
+The graph clearly shows that smokers has greater medical charges compared to non-smokers.
+
+## Medical Charges With Age, BMI and Children in The Category of Smokers
+
+```{r message=FALSE, warning=FALSE}
+for (col in c('age', 'bmi', 'children')) {
+  scplot <- ggplot(train, aes(x = !!sym(col), y = charges, group = smoker, fill = smoker, colour = smoker)) +
+    geom_jitter() +
+    geom_smooth(method = 'lm', se = FALSE, linewidth = .8) + 
+    ggtitle(glue::glue("Medical Charges by {col} in Smoker Category")) +
+    
+    theme(plot.title = element_text(color = "navy", hjust = 0.5, size = 20),
+          axis.title.x = element_text(size = 15),
+          axis.title.y = element_text(size = 15),
+          axis.text.x = element_text(size = 12),
+          axis.text.y = element_text(size = 12),
+          legend.title = element_blank(),
+          legend.text = element_text(size = 12))
+  
+  print(scplot)
+}
+```
+
+From the above plots we can see that medical charge of smokers are always higher than non-smokers irrespective to their age, BMI and number of children they have. And there is a positive trend showing that medical charges increases as age and BMI increases. However, there is no significant uptrend in medical charges between smokers and non-smokers who have children. But, people with more children tends to smoke less.
+
+## Correlation Heat Map
+
+```{r}
+ggcorr(train %>% mutate_if(is.factor, as.numeric), label = TRUE)
+```
+
+The Correlation map illustrated above shows significant correlation between `smoker` and `charges` . The relationship between other features are not as significant as these two features. However, After `smoker`, there is some degree of correlation between `age` and `charges`.
+
+# Linear Regression Analysis
+
+## Step 01: Exploring The Models
+
+```{r}
+train_mod <- lm(charges ~ ., data = train)
+step(train_mod)
+```
+
+Here, we used *`step()`* function to identify the best fit model by looking at the lower AIC score. The best fit model is saved in `train_lm`.
+
+```{r}
+train_lm <- lm(formula = charges ~ age + bmi + children + smoker, data = train)
+```
+
+## Step 02: Prediction
+
+```{r}
+pred_test <- predict(train_lm, test)
+```
+
+## Step 03: Evaluation of The Model Performance
+
+```{r}
+mae <- MAE(test$charges, pred_test)
+rmse <- RMSE(test$charges, pred_test)
+
+cat("Mean Absolute Error (MAE):", mae, "\n")
+cat("Root Mean Squared Error (RMSE):", rmse, "\n")
+```
+
+-   **Mean Absolute Error (MAE):** The MAE shows the average absolute difference between the actual and predicted values. Lower value of MAE indicates better model performance. Here, The MAE value derived from the model is 3941.464. It means that, on average, the model's predictions on medical charges differs with the actual medical charges by approximately \$3941.464.
+
+-   **Root Mean Squared Error (RMSE):** The RMSE shows the square root of the average of the squared differences between the actual and predicted values. Just like MAE, The lower RMSE value indicates better model performance. Here, The RMSE value derived from the model is 5672.102. It means that, on average, the model's predictions on medical charges deviate by \$5672.102 from the actual medical charges.
+
+## Step 04: Evaluate The Model
+
+```{r}
+summary(train_lm)
+```
+
+The summary of the model gives details about the coefficients and statistical significance of each predictor:
+
+-   The intercept is estimated at -11905.11 meaning that Even the other features remain zero, there will be medical charge if -\$11905.11 present which is not practical. However, In this case, a negative intercept doesn't show a meaningful interpretation as charges can not be in negative form.
+
+-   For every unit of increase in age will increase the medical charges by \$254.87 approx.
+
+-   For every unit of increase in BMI will result in an increase in medical charges by \$320.64 approx.
+
+-   For every unit of increase in child will raise the medical charges by \$429.86 approx.
+
+-   A smoker will have additional \$23586.13 medical charges compared to a non-smoker.
+
+The `R-squared` value of 0.7359 refers that the model explains significant portion of 73.59% of the variance in the medical charges.
+
+## Step 05: Checking The Validity of Linear Model Assumptions
+
+### Testing Linearity:
+
+To identify any linear relationship between predictors and `charges` taking the following hypothesis.
+
+-   Null Hypothesis H0: The predictors does not correlate with `charges`
+
+-   Alternate Hypothesis H1: The predictors correlate with `charges`
+
+```{r}
+train_lin_test <- train %>% select(age, bmi, children, smoker) %>% mutate_all(~as.numeric(as.factor(.)))
+
+train_lin_test$charges <- train$charges
+
+for (col in c('age', 'bmi', 'children', 'smoker')) {
+  corr <- cor.test(train_lin_test[[col]], train_lin_test$charges)
+  print(round(corr$p.value, 4))
+}
+```
+
+Here, the `p-value` of predictors and charges are below `alpha` 0.05. So, we can reject the null hypothesis and accept the alternate hypothesis stating that the predictors are correlated with charges variable.
+
+### Residual Normality:
+
+```{r}
+residuals <- residuals(train_lm)
+ggplot(train_lm, aes(x = residuals)) +
+  geom_histogram(fill = "skyblue", color = "black", alpha = 0.7) + 
+  labs(title = "Histograms of Residuals from Linear Regression Model,", 
+          x = "Residuals", 
+          y = "Frequency") +
+  
+   theme(plot.title = element_text(color="navy",
+                                   hjust = .5,
+                                   size=20),
+                        
+                        axis.title.x = element_text(size=15),
+                        axis.title.y = element_text(size=15),
+                        axis.text.x = element_text(size=12),
+                        axis.text.y = element_text(size=12),
+                        )
+```
+
+From the above histogram, a normal distribution of residuals is clearly visible near zero.
+
+### Checking Homoscedasticity:
+
+```{r}
+plot(train_lm$fitted.values, train_lm$residuals)
+  abline(h = 0,col = "red") 
+
+
+```
+
+In the Above plot, we can see that the spread of predicted values are fairly uniform. Hence, homoscedasticity is present in the linear regression model.
+
+### Assessing Multicollinearity:
+
+```{r}
+vif(train_lm)
+```
+
+As VIF lies below 10, there is no multicollinearity, indicating that predictors do not excessively influence each other.
